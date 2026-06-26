@@ -217,7 +217,7 @@ def fetch_bars(mt5, symbol: str, timeframe, n_bars: int, label: str) -> pd.DataF
         raise RuntimeError(f"Failed to fetch {label} bars: {mt5.last_error()}")
 
     df = pd.DataFrame(rates)
-    df["Date"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_localize(None)
+    df["Date"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_localize(None).astype("datetime64[ns]")
     df.rename(columns={
         "open": "Open", "high": "High", "low": "Low",
         "close": "Close", "tick_volume": "Volume"
