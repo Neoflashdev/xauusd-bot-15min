@@ -5,3 +5,4 @@ xgboost
 scikit-learn
 requests
 python-dotenv
+ta
