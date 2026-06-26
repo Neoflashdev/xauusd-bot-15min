@@ -1008,6 +1008,44 @@ class LiveBot:
         alert(msg)
 
     # -------------------------------------------------------------------------
+    # TELEGRAM COMMAND LISTENER
+    # -------------------------------------------------------------------------
+    def check_telegram_commands(self):
+        """Poll Telegram getUpdates API for commands like /report or /status."""
+        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+            return
+            
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        state = load_state()
+        last_id = state.get("last_telegram_update_id")
+        
+        params = {"timeout": 5}
+        if last_id:
+            params["offset"] = last_id + 1
+            
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            data = r.json()
+            if data.get("ok"):
+                for update in data.get("result", []):
+                    uid = update["update_id"]
+                    state["last_telegram_update_id"] = uid
+                    save_state(state)
+                    
+                    msg = update.get("message", {})
+                    text = msg.get("text", "").strip().lower()
+                    chat_id = str(msg.get("chat", {}).get("id", ""))
+                    
+                    # Only reply to our authorized chat ID
+                    if chat_id == TELEGRAM_CHAT_ID:
+                        if text in ["/status", "/report", "/stats"]:
+                            log.info(f"[TELEGRAM] Received command: {text}")
+                            self._send_daily_summary()
+        except Exception as e:
+            # Silently ignore connection errors during polling to avoid log spam
+            pass
+
+    # -------------------------------------------------------------------------
     # DAILY SUMMARY
     # -------------------------------------------------------------------------
     def _send_daily_summary(self):
@@ -1045,6 +1083,9 @@ class LiveBot:
             try:
                 # -- Check for closed trades every loop --
                 self.check_closed_positions()
+
+                # -- Check for incoming Telegram commands --
+                self.check_telegram_commands()
 
                 # -- Daily summary at midnight UTC --
                 today = datetime.datetime.utcnow().date()
