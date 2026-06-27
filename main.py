@@ -280,7 +280,7 @@ def load_models() -> tuple:
 # INDICATOR PIPELINE  (reused identically from backtest — DO NOT MODIFY)
 # -----------------------------------------------------------------------------
 sys.path.insert(0, str(BASE))
-from XAUUSD_Colab_Backtest import (
+from BTCUSD_Backtest import (
     CONFIG,
     add_m15_indicators,
     build_4h_trend,
@@ -315,7 +315,9 @@ def build_live_df(df_m15: pd.DataFrame, df_4h: pd.DataFrame) -> pd.DataFrame:
     df["bear_msb"] = bear_msb
     df["msb_size"] = msb_size
 
-    df = generate_signals(df, allow_longs=True, allow_shorts=False)
+    allow_l = DIRECTION in ["LONG", "BOTH"]
+    allow_s = DIRECTION in ["SHORT", "BOTH"]
+    df = generate_signals(df, allow_longs=allow_l, allow_shorts=allow_s)
     return df
 
 
@@ -620,10 +622,10 @@ class LiveBot:
     # -------------------------------------------------------------------------
     def startup(self):
         log.info("=" * 60)
-        log.info("  XAUUSD M15 MSB LIVE BOT")
-        log.info(f"  Mode     : {EXECUTION_MODE}")
+        log.info(f"  {SYMBOL} M15 MSB LIVE BOT")
+        log.info(f"  Mode     : {EXECUTION_MODE} | Live: {os.getenv('LIVE_ENABLED')}")
         log.info(f"  Symbol   : {SYMBOL}")
-        log.info(f"  Strategy : Long-only | 4H Bull | MSB | Score >= {THRESHOLD} | RR={RR}")
+        log.info(f"  Strategy : Direction: {DIRECTION} | MSB | Score >= {THRESHOLD} | RR={RR}")
         log.info(f"  Risk     : {RISK_PCT*100:.2f}% per trade | MaxLot: {MAX_LOT}")
         log.info("=" * 60)
 
@@ -632,6 +634,24 @@ class LiveBot:
         acc = get_account_info(self.mt5)
         self.risk.total_equity_start = acc.get("balance", 10000)
         self.min_lot, self.lot_step  = get_broker_lot_info(self.mt5)
+        
+        # Validate broker symbol info
+        sym_info = self.mt5.symbol_info(SYMBOL)
+        if sym_info is None:
+            log.error(f"[ERROR] Symbol {SYMBOL} not found in MT5!")
+            sys.exit(1)
+            
+        log.info("\n--- MT5 SYMBOL INFO ---")
+        log.info(f"symbol        : {sym_info.name}")
+        log.info(f"digits        : {sym_info.digits}")
+        log.info(f"point         : {sym_info.point}")
+        log.info(f"contract_size : {sym_info.trade_contract_size}")
+        log.info(f"min_lot       : {sym_info.volume_min}")
+        log.info(f"max_lot       : {sym_info.volume_max}")
+        log.info(f"lot_step      : {sym_info.volume_step}")
+        log.info(f"trade_mode    : {sym_info.trade_mode}")
+        log.info(f"spread        : {sym_info.spread}")
+        log.info("-----------------------\n")
 
         alert(
             f"[BOT STARTED]\n"
@@ -671,9 +691,9 @@ class LiveBot:
             "msb_detected":     int(msb_det),
         }
 
-        # Gate 1: Long signals in 4H bull trend only
-        if signal != 1 or trend_4h != 1:
-            base_rec.update({"decision": "SKIP", "reason": "No long MSB or 4H not bull"})
+        # Gate 1: Valid signal detection (LONG=1, SHORT=-1)
+        if signal == 0:
+            base_rec.update({"decision": "SKIP", "reason": "No valid signal"})
             return base_rec
 
         # Gate 2: Risk limits

@@ -19,7 +19,8 @@ from pathlib import Path
 # -----------------------------------------------------------------------
 try:
     from dotenv import load_dotenv
-    _env_path = Path(__file__).parent / ".env"
+    env_filename = os.getenv("ENV_FILE", ".env")
+    _env_path = Path(__file__).parent / env_filename
     load_dotenv(dotenv_path=_env_path, override=True)
 except ImportError:
     pass  # python-dotenv not installed; os.environ still works
@@ -45,12 +46,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # -----------------------------------------------------------------------
 # FROZEN STRATEGY CONSTANTS  (DO NOT CHANGE without backtest validation)
 # -----------------------------------------------------------------------
-W_EXP     = 0.20   # Ensemble weight: Expansion model
-W_CONT    = 0.40   # Ensemble weight: Trend Continuation model
-W_FAKE    = 0.40   # Ensemble weight: Fake Breakout model (subtracted)
+W_EXP     = float(os.getenv("W_EXP", "0.20"))   # Ensemble weight: Expansion model
+W_CONT    = float(os.getenv("W_CONT", "0.40"))  # Ensemble weight: Trend Continuation model
+W_FAKE    = float(os.getenv("W_FAKE", "0.40"))  # Ensemble weight: Fake Breakout model (subtracted)
 THRESHOLD = float(os.getenv("THRESHOLD", "0.65"))   # Normalized ensemble score minimum
 RR        = float(os.getenv("RR", "1.5"))           # Risk:Reward ratio
-DIRECTION = "LONG"                                    # Long-only system
+DIRECTION = os.getenv("DIRECTION", "LONG")          # Trading direction (LONG, SHORT, or BOTH)
 SYMBOL    = os.getenv("SYMBOL", "XAUUSD")
 
 # -----------------------------------------------------------------------
@@ -82,20 +83,20 @@ H4_BARS_NEEDED  = int(os.getenv("H4_BARS_NEEDED", "500"))
 # -----------------------------------------------------------------------
 LOGS_DIR   = BASE / "logs"
 DATA_DIR   = BASE / "data"
-MODELS_DIR = BASE / "models"
+MODELS_DIR = BASE / "models" / SYMBOL.lower()
 
 # Auto-create directories so the bot runs on a fresh server
 LOGS_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
-MODELS_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 # -----------------------------------------------------------------------
 # FILE PATHS
 # -----------------------------------------------------------------------
-BOT_LOG_FILE  = LOGS_DIR / "live_bot.log"
-DECISION_LOG  = DATA_DIR / "live_decision_log.csv"
-TRADE_LOG     = DATA_DIR / "live_trade_log.csv"
-STATE_FILE    = DATA_DIR / "state.json"
+BOT_LOG_FILE  = LOGS_DIR / f"{SYMBOL}_live_bot.log"
+DECISION_LOG  = LOGS_DIR / f"{SYMBOL}_decision_log.csv"
+TRADE_LOG     = LOGS_DIR / f"{SYMBOL}_trade_log.csv"
+STATE_FILE    = DATA_DIR / f"state_{SYMBOL}.json"
 
 MODEL_PATHS = {
     "expansion": MODELS_DIR / "expansion_model.pkl",

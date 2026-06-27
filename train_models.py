@@ -6,7 +6,7 @@ them to disk as .pkl files.
 
 Rules:
 - This script trains on FULL historical data.
-- The live bot (XAUUSD_Live_Bot.py) NEVER trains. It only loads these files.
+- The live bot (main.py) NEVER trains. It only loads these files.
 - Do NOT run this script between paper trades or mid-session.
 - Run once, then deploy the bot.
 
@@ -39,7 +39,7 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(__file__))
 
 # We import the shared functions from the backtest module
-from XAUUSD_Colab_Backtest import (
+from BTCUSD_Backtest import (
     CONFIG,
     load_csv,
     add_m15_indicators,
@@ -52,9 +52,9 @@ from XAUUSD_Colab_Backtest import (
     extract_ml_features_v2,
     generate_ml_targets,
 )
+from config import MODELS_DIR
 
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
-os.makedirs(MODEL_DIR, exist_ok=True)
+MODEL_DIR = str(MODELS_DIR)
 
 XGB_PARAMS = dict(
     n_estimators=300,
@@ -145,13 +145,13 @@ def save_artifact(obj, filename: str):
 
 def main():
     print("=" * 60)
-    print("  FROZEN ENSEMBLE MODEL TRAINING")
-    print("  Strategy: Long-only | 4H Bull | MSB | Ensemble Score")
+    print(f"  FROZEN ENSEMBLE MODEL TRAINING ({CONFIG.get('path_m15', 'Data')})")
+    print("  Strategy: Direction agnostic | MSB | Ensemble Score")
     print("=" * 60)
 
     # ── 1. Load and prepare data ──────────────────────────────────────────
-    path_m15 = CONFIG["path_m15"]
-    path_4h  = CONFIG["path_4h"]
+    path_m15 = os.path.join(os.path.dirname(__file__), CONFIG["path_m15"])
+    path_4h  = os.path.join(os.path.dirname(__file__), CONFIG["path_4h"])
 
     if not os.path.exists(path_m15):
         print(f"[ERROR] M15 CSV not found: {path_m15}")
@@ -205,7 +205,7 @@ def main():
     print(f"  Models saved to: {MODEL_DIR}/")
     print("=" * 60)
     print("\nNow run the live bot:")
-    print("  python XAUUSD_Live_Bot.py")
+    print("  python main.py")
 
 
 if __name__ == "__main__":
