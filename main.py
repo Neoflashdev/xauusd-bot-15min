@@ -1036,13 +1036,23 @@ class LiveBot:
                     text = msg.get("text", "").strip().lower()
                     chat_id = str(msg.get("chat", {}).get("id", ""))
                     
-                    # Only reply to our authorized chat ID
-                    if chat_id == TELEGRAM_CHAT_ID:
-                        if text in ["/status", "/report", "/stats"]:
-                            log.info(f"[TELEGRAM] Received command: {text}")
+                    if not text:
+                        continue
+                        
+                    # Log that we saw a message (helpful for debugging)
+                    log.info(f"[TELEGRAM DEBUG] Saw message '{text}' from chat_id {chat_id}")
+                    
+                    # Check if the text starts with any of our commands
+                    is_command = text.startswith("/status") or text.startswith("/report") or text.startswith("/stats")
+                    
+                    if is_command:
+                        if chat_id == str(TELEGRAM_CHAT_ID).strip():
+                            log.info(f"[TELEGRAM] Authorized command received: {text}")
                             self._send_daily_summary()
+                        else:
+                            log.warning(f"[TELEGRAM] Unauthorized command from chat_id {chat_id} (Expected {TELEGRAM_CHAT_ID})")
         except Exception as e:
-            # Silently ignore connection errors during polling to avoid log spam
+            # Uncomment for debugging if needed: log.error(f"Telegram polling error: {e}")
             pass
 
     # -------------------------------------------------------------------------
