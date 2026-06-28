@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # We import the shared functions from the backtest module
 import importlib as _importlib
-from config import MODELS_DIR, BACKTEST_MODULE
+from config import MODELS_DIR, BACKTEST_MODULE, DIRECTION, RR
 _bt_mod = _importlib.import_module(BACKTEST_MODULE)
 CONFIG               = _bt_mod.CONFIG
 load_csv             = _bt_mod.load_csv
@@ -70,6 +70,9 @@ XGB_PARAMS = dict(
 FEATURE_PREFIXES = ("LIQ_", "MEM_", "VOL_", "GEO_")
 
 
+# -----------------------------------------------------------------------------
+# CORE LOGIC
+# -----------------------------------------------------------------------------
 def prepare_dataframe(path_m15: str, path_4h: str) -> pd.DataFrame:
     """Load CSVs, compute all indicators, merge 4H trend, detect swings/MSB."""
     df15 = load_csv(path_m15, "M15")
@@ -96,13 +99,15 @@ def prepare_dataframe(path_m15: str, path_4h: str) -> pd.DataFrame:
     df15["bear_msb"]  = bear_msb
     df15["msb_size"]  = msb_size
 
-    df15 = generate_signals(df15, allow_longs=True, allow_shorts=True)
+    allow_longs  = DIRECTION in ["LONG", "BOTH"]
+    allow_shorts = DIRECTION in ["SHORT", "BOTH"]
+    df15 = generate_signals(df15, allow_longs=allow_longs, allow_shorts=allow_shorts)
     return df15
 
 
 def build_feature_matrix(df15: pd.DataFrame) -> tuple:
     """Run backtest to get trades, then extract ML features."""
-    trades = simulate_trades(df15, rr=CONFIG["rr_ratio"])
+    trades = simulate_trades(df15, rr=RR)
     print(f"  Total trades from simulation: {len(trades)}")
 
     df_ml = extract_ml_features_v2(trades, df15)

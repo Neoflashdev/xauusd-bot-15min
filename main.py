@@ -454,21 +454,30 @@ def extract_live_features(df: pd.DataFrame, sig_i: int, meta: dict) -> np.ndarra
 # LOT SIZE CALCULATION
 # -----------------------------------------------------------------------------
 def calc_lot_size(
-    balance: float, entry: float, sl: float,
-    min_lot: float, lot_step: float,
-    contract_size: float
+    mt5, balance: float, entry: float, sl: float,
+    min_lot: float, lot_step: float, order_type: int
 ) -> tuple:
     """
     Calculate lot size so risk at SL = RISK_PCT * balance.
-    contract_size is fetched live from MT5 symbol_info.trade_contract_size.
-    e.g. XAUUSDm = 100,  BTCUSDm = 1
+    Uses native mt5.order_calc_profit for 100% accurate margin/cross-rate math.
     """
     risk_amount = balance * RISK_PCT
     stop_dist   = abs(entry - sl)
     if stop_dist <= 0:
         return None, "SL distance is zero"
 
-    raw_lot = risk_amount / (stop_dist * contract_size)
+    # Calculate exact profit loss for min_lot
+    # order_calc_profit returns the exact loss in account currency
+    min_lot_loss = mt5.order_calc_profit(order_type, SYMBOL, min_lot, entry, sl)
+    
+    if min_lot_loss is None or min_lot_loss == 0.0:
+        return None, "order_calc_profit failed to calculate loss"
+
+    # order_calc_profit for SL is negative, so absolute value is the risk
+    min_lot_loss = abs(min_lot_loss)
+    
+    # Scale min_lot linearly to reach risk_amount
+    raw_lot = (risk_amount / min_lot_loss) * min_lot
     lot     = max(min_lot, round(raw_lot // lot_step * lot_step, 8))
 
     note = ""
@@ -558,9 +567,34 @@ def count_open_positions(mt5) -> int:
 # -----------------------------------------------------------------------------
 class RiskState:
     def __init__(self):
-        self.reset_day()
         self.total_equity_start = None
         self.total_drawdown_pct = 0.0
+
+        state = load_state()
+        risk_data = state.get("risk_state", {})
+        today_str = datetime.datetime.utcnow().date().isoformat()
+        saved_date = risk_data.get("last_reset_date", "")
+
+        if saved_date == today_str:
+            self.daily_pnl_pct   = risk_data.get("daily_pnl_pct", 0.0)
+            self.trades_today    = risk_data.get("trades_today", 0)
+            self.consec_losses   = risk_data.get("consec_losses", 0)
+            self.halted_today    = risk_data.get("halted_today", False)
+            self.last_reset_date = datetime.datetime.utcnow().date()
+            log.info(f"[RISK] Loaded persistent state for today: {self.trades_today} trades, {self.daily_pnl_pct:.2f}% P&L, {self.consec_losses} losses")
+        else:
+            self.reset_day()
+
+    def _save(self):
+        state = load_state()
+        state["risk_state"] = {
+            "daily_pnl_pct": self.daily_pnl_pct,
+            "trades_today": self.trades_today,
+            "consec_losses": self.consec_losses,
+            "halted_today": self.halted_today,
+            "last_reset_date": self.last_reset_date.isoformat(),
+        }
+        save_state(state)
 
     def reset_day(self):
         """Called at Midnight UTC daily reset."""
@@ -569,6 +603,7 @@ class RiskState:
         self.consec_losses   = 0
         self.halted_today    = False
         self.last_reset_date = datetime.datetime.utcnow().date()
+        self._save()
 
     def check_daily_reset(self):
         today = datetime.datetime.utcnow().date()
@@ -584,11 +619,13 @@ class RiskState:
             return False, "Daily halt active"
         if self.daily_pnl_pct <= -DAILY_LOSS_LIMIT_PCT:
             self.halted_today = True
+            self._save()
             return False, f"Daily loss limit hit ({self.daily_pnl_pct:.2f}%)"
         if self.total_drawdown_pct <= -MAX_TOTAL_DRAWDOWN_PCT:
             return False, f"Max total drawdown hit ({self.total_drawdown_pct:.2f}%)"
         if self.consec_losses >= STOP_AFTER_CONSEC_LOSSES:
             self.halted_today = True
+            self._save()
             return False, f"{STOP_AFTER_CONSEC_LOSSES} consecutive losses - halted for today"
         if self.trades_today >= MAX_TRADES_PER_DAY:
             return False, f"Max trades/day reached ({MAX_TRADES_PER_DAY})"
@@ -603,6 +640,7 @@ class RiskState:
             self.consec_losses += 1
         else:
             self.consec_losses  = 0
+        self._save()
 
 
 # -----------------------------------------------------------------------------
@@ -790,13 +828,16 @@ class LiveBot:
             rr=RR,
         )
 
-        # Lot sizing — use live contract_size from symbol_info
+        # Determine MT5 order type
+        import MetaTrader5 as _mt5_ref
+        order_type = _mt5_ref.ORDER_TYPE_BUY if signal == 1 else _mt5_ref.ORDER_TYPE_SELL
+
+        # Lot sizing — use live order_calc_profit
         acc     = get_account_info(self.mt5)
         balance = acc.get("balance", self.risk.total_equity_start)
 
-        lot, note = calc_lot_size(balance, entry_price, sl_price,
-                                  self.min_lot, self.lot_step,
-                                  self.contract_size)
+        lot, note = calc_lot_size(self.mt5, balance, entry_price, sl_price,
+                                  self.min_lot, self.lot_step, order_type)
         if lot is None:
             base_rec.update({"decision": "SKIP", "reason": note})
             log.info(f"[LOT] {note}")
@@ -804,7 +845,12 @@ class LiveBot:
         if note:
             log.info(f"[LOT] {note}")
 
-        risk_pct = (abs(entry_price - sl_price) * lot * self.contract_size) / balance * 100
+        # Recalculate actual exact risk using native MT5 func
+        actual_loss = self.mt5.order_calc_profit(order_type, SYMBOL, lot, entry_price, sl_price)
+        if actual_loss is None:
+            risk_pct = (abs(entry_price - sl_price) * lot * self.contract_size) / balance * 100
+        else:
+            risk_pct = (abs(actual_loss) / balance) * 100
         digits   = self.sym_digits
 
         base_rec.update({
@@ -814,10 +860,6 @@ class LiveBot:
             "lot":       lot,
             "risk_pct":  round(risk_pct, 3),
         })
-
-        # Determine MT5 order type
-        import MetaTrader5 as _mt5_ref
-        order_type = _mt5_ref.ORDER_TYPE_BUY if signal == 1 else _mt5_ref.ORDER_TYPE_SELL
 
         # Place order
         result = place_order(self.mt5, entry_price, sl_price, tp_price, lot,

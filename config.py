@@ -107,13 +107,13 @@ MODEL_PATHS = {
 }
 
 # -----------------------------------------------------------------------
-# BACKTEST REFERENCE TARGETS  (frozen — used by performance_tracker.py)
+# BACKTEST REFERENCE TARGETS  (used by performance_tracker.py)
 # -----------------------------------------------------------------------
-BACKTEST_WIN_RATE_LOW  = 46.0    # %
-BACKTEST_WIN_RATE_HIGH = 50.0    # %
-BACKTEST_PF_LOW        = 1.50
-BACKTEST_PF_HIGH       = 1.73
-BACKTEST_AVG_R         = 0.39    # R per trade
-BACKTEST_MAX_DD_R      = -6.0    # Max drawdown in R
-BACKTEST_TRADES_MONTH  = 14      # Approximate trades per month
-MIN_TRADES_FOR_WARN    = 20      # Minimum trades before comparison is meaningful
+BACKTEST_WIN_RATE_LOW  = float(os.getenv("BACKTEST_WIN_RATE_LOW", "46.0"))
+BACKTEST_WIN_RATE_HIGH = float(os.getenv("BACKTEST_WIN_RATE_HIGH", "50.0"))
+BACKTEST_PF_LOW        = float(os.getenv("BACKTEST_PF_LOW", "1.50"))
+BACKTEST_PF_HIGH       = float(os.getenv("BACKTEST_PF_HIGH", "1.73"))
+BACKTEST_AVG_R         = float(os.getenv("BACKTEST_AVG_R", "0.39"))
+BACKTEST_MAX_DD_R      = float(os.getenv("BACKTEST_MAX_DD_R", "-6.0"))
+BACKTEST_TRADES_MONTH  = int(os.getenv("BACKTEST_TRADES_MONTH", "14"))
+MIN_TRADES_FOR_WARN    = int(os.getenv("MIN_TRADES_FOR_WARN", "20"))
