@@ -4,6 +4,7 @@
 
 # --- SECRETS (never commit) ---
 .env
+.env.*
 
 # --- MODEL FILES (large binaries — copy separately) ---
 models/*.pkl
