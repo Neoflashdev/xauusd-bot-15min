@@ -50,7 +50,7 @@ warnings.filterwarnings("ignore")
 from config import (
     BASE, MT5_LOGIN, MT5_PASSWORD, MT5_SERVER,
     TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-    W_EXP, W_CONT, W_FAKE, THRESHOLD, RR, DIRECTION, SYMBOL,
+    W_EXP, W_CONT, W_FAKE, THRESHOLD, RR, DIRECTION, SYMBOL, BACKTEST_MODULE,
     RISK_PCT, MAX_LOT, MAX_OPEN_POSITIONS,
     DAILY_LOSS_LIMIT_PCT, MAX_TOTAL_DRAWDOWN_PCT,
     STOP_AFTER_CONSEC_LOSSES, MAX_TRADES_PER_DAY,
@@ -280,16 +280,16 @@ def load_models() -> tuple:
 # INDICATOR PIPELINE  (reused identically from backtest — DO NOT MODIFY)
 # -----------------------------------------------------------------------------
 sys.path.insert(0, str(BASE))
-from BTCUSD_Backtest import (
-    CONFIG,
-    add_m15_indicators,
-    build_4h_trend,
-    merge_4h_into_m15,
-    detect_swings_no_repaint,
-    detect_msb,
-    generate_signals,
-    compute_sl_tp,
-)
+import importlib as _importlib
+_bt_mod = _importlib.import_module(BACKTEST_MODULE)
+CONFIG                  = _bt_mod.CONFIG
+add_m15_indicators      = _bt_mod.add_m15_indicators
+build_4h_trend          = _bt_mod.build_4h_trend
+merge_4h_into_m15       = _bt_mod.merge_4h_into_m15
+detect_swings_no_repaint = _bt_mod.detect_swings_no_repaint
+detect_msb              = _bt_mod.detect_msb
+generate_signals        = _bt_mod.generate_signals
+compute_sl_tp           = _bt_mod.compute_sl_tp
 
 
 def build_live_df(df_m15: pd.DataFrame, df_4h: pd.DataFrame) -> pd.DataFrame:
@@ -456,11 +456,12 @@ def extract_live_features(df: pd.DataFrame, sig_i: int, meta: dict) -> np.ndarra
 def calc_lot_size(
     balance: float, entry: float, sl: float,
     min_lot: float, lot_step: float,
-    contract_size: float = 100.0
+    contract_size: float
 ) -> tuple:
     """
     Calculate lot size so risk at SL = RISK_PCT * balance.
-    XAUUSD: 1 lot = 100 oz
+    contract_size is fetched live from MT5 symbol_info.trade_contract_size.
+    e.g. XAUUSDm = 100,  BTCUSDm = 1
     """
     risk_amount = balance * RISK_PCT
     stop_dist   = abs(entry - sl)
@@ -483,9 +484,17 @@ def calc_lot_size(
 # -----------------------------------------------------------------------------
 # ORDER EXECUTION
 # -----------------------------------------------------------------------------
-def place_order(mt5, entry: float, sl: float, tp: float, lot: float) -> dict:
+def place_order(mt5, entry: float, sl: float, tp: float, lot: float,
+                order_type: int, digits: int) -> dict:
+    """
+    Place a market order (BUY or SELL) with SL/TP rounded to broker digits.
+    order_type  : mt5.ORDER_TYPE_BUY or mt5.ORDER_TYPE_SELL
+    digits      : number of decimal places from symbol_info.digits
+    """
+    direction_str = "LONG" if order_type == 0 else "SHORT"  # 0=BUY,1=SELL
+
     if EXECUTION_MODE == "PAPER_INTERNAL":
-        log.info(f"[PAPER_INTERNAL] LONG {lot} lots @ {entry:.2f} | SL {sl:.2f} | TP {tp:.2f}")
+        log.info(f"[PAPER_INTERNAL] {direction_str} {lot} lots @ {entry:.{digits}f} | SL {sl:.{digits}f} | TP {tp:.{digits}f}")
         return {"retcode": 0, "order": 99999, "position_id": 99999}
 
     if EXECUTION_MODE == "LIVE_DISABLED":
@@ -498,17 +507,23 @@ def place_order(mt5, entry: float, sl: float, tp: float, lot: float) -> dict:
         log.error("Could not get tick data.")
         return None
 
+    # Direction-aware entry price and order type
+    if order_type == mt5.ORDER_TYPE_BUY:
+        price = tick.ask
+    else:
+        price = tick.bid
+
     request = {
         "action":       mt5.TRADE_ACTION_DEAL,
         "symbol":       SYMBOL,
         "volume":       float(lot),
-        "type":         mt5.ORDER_TYPE_BUY,
-        "price":        tick.ask,
-        "sl":           round(sl, 2),
-        "tp":           round(tp, 2),
+        "type":         order_type,
+        "price":        price,
+        "sl":           round(sl, digits),
+        "tp":           round(tp, digits),
         "deviation":    20,
         "magic":        MAGIC,
-        "comment":      "XAUUSD_MSB_Bot",
+        "comment":      f"{SYMBOL}_MSB_Bot",
         "type_time":    mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
@@ -521,7 +536,6 @@ def place_order(mt5, entry: float, sl: float, tp: float, lot: float) -> dict:
         log.error(f"Order failed. retcode={result.retcode} | comment={result.comment}")
         return None
 
-    # result.deal is the opening deal ticket = position_id for the first deal
     return {
         "retcode":     result.retcode,
         "order":       result.order,
@@ -605,6 +619,8 @@ class LiveBot:
         self.risk              = RiskState()
         self.min_lot           = 0.01
         self.lot_step          = 0.01
+        self.contract_size     = 100.0   # fetched live at startup from symbol_info
+        self.sym_digits        = 2       # fetched live at startup from symbol_info
         self._last_summary_date = None
 
         # Load persisted candle time (restart-safe)
@@ -653,6 +669,10 @@ class LiveBot:
         log.info(f"spread        : {sym_info.spread}")
         log.info("-----------------------\n")
 
+        # Store symbol specs for use in lot sizing and rounding
+        self.contract_size = sym_info.trade_contract_size
+        self.sym_digits    = sym_info.digits
+
         alert(
             f"[BOT STARTED]\n"
             f"Account : {acc.get('login')}\n"
@@ -678,9 +698,18 @@ class LiveBot:
     def evaluate_candle(self, df: pd.DataFrame, sig_i: int) -> dict:
         """Evaluate one closed M15 candle. Returns decision dict."""
         bar_time = df["Date"].iloc[sig_i]
-        signal   = df["signal"].iloc[sig_i]
+        signal   = int(df["signal"].iloc[sig_i])
         trend_4h = df["4h_trend"].iloc[sig_i]
-        msb_det  = bool(df["bull_msb"].iloc[sig_i])
+        # Track MSB type based on signal direction
+        msb_det  = bool(df["bull_msb"].iloc[sig_i]) if signal == 1 else bool(df["bear_msb"].iloc[sig_i])
+
+        # Determine direction label and MT5 order type
+        if signal == 1:
+            dir_label  = "LONG"
+        elif signal == -1:
+            dir_label  = "SHORT"
+        else:
+            dir_label  = "NONE"
 
         base_rec = {
             "time":             datetime.datetime.utcnow().isoformat(),
@@ -750,7 +779,7 @@ class LiveBot:
 
         entry_price = df["Open"].iloc[entry_idx]
         sl_price, tp_price = compute_sl_tp(
-            direction=1,
+            direction=signal,
             entry_price=entry_price,
             idx=sig_i,
             low_arr=df["Low"].values,
@@ -761,11 +790,13 @@ class LiveBot:
             rr=RR,
         )
 
-        # Lot sizing
+        # Lot sizing — use live contract_size from symbol_info
         acc     = get_account_info(self.mt5)
         balance = acc.get("balance", self.risk.total_equity_start)
 
-        lot, note = calc_lot_size(balance, entry_price, sl_price, self.min_lot, self.lot_step)
+        lot, note = calc_lot_size(balance, entry_price, sl_price,
+                                  self.min_lot, self.lot_step,
+                                  self.contract_size)
         if lot is None:
             base_rec.update({"decision": "SKIP", "reason": note})
             log.info(f"[LOT] {note}")
@@ -773,18 +804,24 @@ class LiveBot:
         if note:
             log.info(f"[LOT] {note}")
 
-        risk_pct = (abs(entry_price - sl_price) * lot * 100) / balance
+        risk_pct = (abs(entry_price - sl_price) * lot * self.contract_size) / balance * 100
+        digits   = self.sym_digits
 
         base_rec.update({
-            "entry":    round(entry_price, 2),
-            "sl":       round(sl_price, 2),
-            "tp":       round(tp_price, 2),
-            "lot":      lot,
-            "risk_pct": round(risk_pct, 3),
+            "entry":     round(entry_price, digits),
+            "sl":        round(sl_price,    digits),
+            "tp":        round(tp_price,    digits),
+            "lot":       lot,
+            "risk_pct":  round(risk_pct, 3),
         })
 
+        # Determine MT5 order type
+        import MetaTrader5 as _mt5_ref
+        order_type = _mt5_ref.ORDER_TYPE_BUY if signal == 1 else _mt5_ref.ORDER_TYPE_SELL
+
         # Place order
-        result = place_order(self.mt5, entry_price, sl_price, tp_price, lot)
+        result = place_order(self.mt5, entry_price, sl_price, tp_price, lot,
+                             order_type=order_type, digits=digits)
         if result is None:
             base_rec.update({"decision": "ERROR", "reason": "order_send failed"})
             return base_rec
@@ -793,11 +830,11 @@ class LiveBot:
         base_rec.update({"decision": "TRADE_OPENED", "reason": "All conditions met"})
 
         alert(
-            f"[TRADE OPENED]\n"
+            f"[TRADE OPENED] {dir_label}\n"
             f"Bar    : {bar_time}\n"
-            f"Entry  : {entry_price:.2f}\n"
-            f"SL     : {sl_price:.2f}\n"
-            f"TP     : {tp_price:.2f}\n"
+            f"Entry  : {entry_price:.{digits}f}\n"
+            f"SL     : {sl_price:.{digits}f}\n"
+            f"TP     : {tp_price:.{digits}f}\n"
             f"Lot    : {lot}\n"
             f"Risk   : {risk_pct:.2f}%\n"
             f"Score  : {score_norm:.3f}\n"
@@ -807,7 +844,7 @@ class LiveBot:
         log_trade({
             "open_time":   str(bar_time),
             "symbol":      SYMBOL,
-            "direction":   "LONG",
+            "direction":   dir_label,
             "entry":       entry_price,
             "sl":          sl_price,
             "tp":          tp_price,
@@ -870,16 +907,19 @@ class LiveBot:
             # Find matching open trade by position_id
             trade_info = self._find_open_trade(deal.position_id)
 
-            # Calculate R-value
+            # Calculate R-value — direction-aware
             r_value = 0.0
             if trade_info:
                 try:
                     entry     = float(trade_info.get("entry", 0))
                     sl        = float(trade_info.get("sl", 0))
+                    direction = trade_info.get("direction", "LONG")
                     stop_dist = abs(entry - sl)
                     if stop_dist > 0:
-                        move    = deal.price - entry
-                        r_value = move / stop_dist
+                        if direction == "LONG":
+                            r_value = (deal.price - entry) / stop_dist
+                        else:  # SHORT
+                            r_value = (entry - deal.price) / stop_dist
                 except Exception:
                     r_value = 0.0
 

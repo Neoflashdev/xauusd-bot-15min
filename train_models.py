@@ -39,20 +39,20 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(__file__))
 
 # We import the shared functions from the backtest module
-from BTCUSD_Backtest import (
-    CONFIG,
-    load_csv,
-    add_m15_indicators,
-    build_4h_trend,
-    merge_4h_into_m15,
-    detect_swings_no_repaint,
-    detect_msb,
-    generate_signals,
-    simulate_trades,
-    extract_ml_features_v2,
-    generate_ml_targets,
-)
-from config import MODELS_DIR
+import importlib as _importlib
+from config import MODELS_DIR, BACKTEST_MODULE
+_bt_mod = _importlib.import_module(BACKTEST_MODULE)
+CONFIG               = _bt_mod.CONFIG
+load_csv             = _bt_mod.load_csv
+add_m15_indicators   = _bt_mod.add_m15_indicators
+build_4h_trend       = _bt_mod.build_4h_trend
+merge_4h_into_m15    = _bt_mod.merge_4h_into_m15
+detect_swings_no_repaint = _bt_mod.detect_swings_no_repaint
+detect_msb           = _bt_mod.detect_msb
+generate_signals     = _bt_mod.generate_signals
+simulate_trades      = _bt_mod.simulate_trades
+extract_ml_features_v2 = _bt_mod.extract_ml_features_v2
+generate_ml_targets  = _bt_mod.generate_ml_targets
 
 MODEL_DIR = str(MODELS_DIR)
 

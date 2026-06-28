@@ -52,7 +52,8 @@ W_FAKE    = float(os.getenv("W_FAKE", "0.40"))  # Ensemble weight: Fake Breakout
 THRESHOLD = float(os.getenv("THRESHOLD", "0.65"))   # Normalized ensemble score minimum
 RR        = float(os.getenv("RR", "1.5"))           # Risk:Reward ratio
 DIRECTION = os.getenv("DIRECTION", "LONG")          # Trading direction (LONG, SHORT, or BOTH)
-SYMBOL    = os.getenv("SYMBOL", "XAUUSD")
+SYMBOL           = os.getenv("SYMBOL", "XAUUSD")
+BACKTEST_MODULE  = os.getenv("BACKTEST_MODULE", "XAUUSD_Colab_Backtest")
 
 # -----------------------------------------------------------------------
 # RISK SETTINGS
