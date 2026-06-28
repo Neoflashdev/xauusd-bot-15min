@@ -125,6 +125,8 @@ def send_telegram(msg: str):
         )
     except Exception as e:
         log.warning(f"Telegram send failed: {e}")
+        import traceback
+        log.debug(traceback.format_exc())
 
 
 def alert(msg: str):
@@ -567,11 +569,12 @@ def count_open_positions(mt5) -> int:
 # -----------------------------------------------------------------------------
 class RiskState:
     def __init__(self):
-        self.total_equity_start = None
-        self.total_drawdown_pct = 0.0
-
         state = load_state()
         risk_data = state.get("risk_state", {})
+        
+        self.total_equity_start = risk_data.get("total_equity_start")
+        self.total_drawdown_pct = risk_data.get("total_drawdown_pct", 0.0)
+
         today_str = datetime.datetime.utcnow().date().isoformat()
         saved_date = risk_data.get("last_reset_date", "")
 
@@ -593,6 +596,8 @@ class RiskState:
             "consec_losses": self.consec_losses,
             "halted_today": self.halted_today,
             "last_reset_date": self.last_reset_date.isoformat(),
+            "total_equity_start": self.total_equity_start,
+            "total_drawdown_pct": self.total_drawdown_pct,
         }
         save_state(state)
 
@@ -632,14 +637,18 @@ class RiskState:
 
         return True, "OK"
 
-    def record_trade(self, pnl_pct: float):
+    def record_trade(self, pnl_pct: float, current_equity: float = None):
         self.daily_pnl_pct     += pnl_pct
-        self.total_drawdown_pct = min(self.total_drawdown_pct, self.daily_pnl_pct)
         self.trades_today       += 1
         if pnl_pct < 0:
             self.consec_losses += 1
         else:
             self.consec_losses  = 0
+            
+        if current_equity is not None and self.total_equity_start is not None and self.total_equity_start > 0:
+            current_dd_pct = ((current_equity - self.total_equity_start) / self.total_equity_start) * 100
+            self.total_drawdown_pct = min(self.total_drawdown_pct, current_dd_pct)
+            
         self._save()
 
 
@@ -686,7 +695,10 @@ class LiveBot:
         self.mt5 = init_mt5()
 
         acc = get_account_info(self.mt5)
-        self.risk.total_equity_start = acc.get("balance", 10000)
+        if self.risk.total_equity_start is None:
+            self.risk.total_equity_start = acc.get("balance", 10000)
+            self.risk._save()
+            
         self.min_lot, self.lot_step  = get_broker_lot_info(self.mt5)
         
         # Validate broker symbol info
@@ -979,10 +991,12 @@ class LiveBot:
                 "r_value":    round(r_value, 2),
             })
 
-            # Update RiskState with actual P&L
+            # Update RiskState with actual P&L and live Equity
+            acc = get_account_info(self.mt5)
             if self.risk.total_equity_start:
                 pnl_pct = (pnl / self.risk.total_equity_start) * 100
-                self.risk.record_trade(pnl_pct)
+                current_equity = acc.get("equity", acc.get("balance", 10000))
+                self.risk.record_trade(pnl_pct, current_equity)
 
             # Calculate running performance stats
             stats = self._calc_running_stats()
@@ -996,7 +1010,7 @@ class LiveBot:
             )
 
         if changed:
-            state["processed_deal_ids"] = list(processed_deal_ids)
+            state["processed_deal_ids"] = list(processed_deal_ids)[-1000:]
             save_state(state)
 
     def _find_open_trade(self, position_id) -> dict:
@@ -1154,8 +1168,9 @@ class LiveBot:
                         else:
                             log.warning(f"[TELEGRAM] Unauthorized command from chat_id {chat_id} (Expected {TELEGRAM_CHAT_ID})")
         except Exception as e:
-            # Uncomment for debugging if needed: log.error(f"Telegram polling error: {e}")
-            pass
+            log.error(f"Telegram polling error: {e}")
+            import traceback
+            log.debug(traceback.format_exc())
 
     # -------------------------------------------------------------------------
     # DAILY SUMMARY

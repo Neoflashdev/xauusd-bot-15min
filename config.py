@@ -76,8 +76,9 @@ POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "60"))
 # -----------------------------------------------------------------------
 # DATA LOOKBACK
 # -----------------------------------------------------------------------
-M15_BARS_NEEDED = int(os.getenv("M15_BARS_NEEDED", "2000"))
-H4_BARS_NEEDED  = int(os.getenv("H4_BARS_NEEDED", "500"))
+# Default fallback values (can be overridden via .env)
+M15_BARS_NEEDED      = int(os.getenv("M15_BARS_NEEDED", "4000"))
+H4_BARS_NEEDED       = int(os.getenv("H4_BARS_NEEDED", "500"))
 
 # -----------------------------------------------------------------------
 # DIRECTORY STRUCTURE  (portable, relative to this file)
