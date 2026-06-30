@@ -1,0 +1,44 @@
+# ============================================================
+# .gitignore — XAUUSD M15 MSB Bot
+# ============================================================
+
+# --- SECRETS (never commit) ---
+.env
+.env.*
+
+# --- MODEL FILES (large binaries — copy separately) ---
+models/*.pkl
+
+# --- DATA AND LOGS (server-specific) ---
+data/
+logs/
+*.log
+*.csv
+
+# --- PYTHON CACHE ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# --- VIRTUAL ENVIRONMENT ---
+venv/
+env/
+.venv/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+
+# --- WINDOWS ---
+Thumbs.db
+desktop.ini
+
+# --- JUPYTER NOTEBOOKS CHECKPOINTS ---
+.ipynb_checkpoints/
+
+# --- TEMP ---
+*.tmp
+state.json
